@@ -31,7 +31,7 @@ function ScoreBar({ label, value, delay = 0 }) {
   );
 }
 
-export default function TextAnalysisPanel() {
+export default function TextAnalysisPanel({ aggressiveMode = false }) {
   const [text, setText] = useState("");
   const [result, setResult] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -41,10 +41,10 @@ export default function TextAnalysisPanel() {
     setIsAnalyzing(true);
     setResult(null);
     await new Promise((r) => setTimeout(r, 600)); // UX delay
-    const res = await detectTextAdversarial(text);
+    const res = await detectTextAdversarial(text, aggressiveMode);
     setResult(res);
     setIsAnalyzing(false);
-  }, [text]);
+  }, [text, aggressiveMode]);
 
   const cfg = result ? THREAT_CONFIG[result.threat_level] || THREAT_CONFIG.LOW : null;
 
@@ -61,6 +61,11 @@ export default function TextAnalysisPanel() {
         <h2 className="text-sm font-mono text-muted-foreground tracking-widest uppercase">
           Text Analysis
         </h2>
+        {aggressiveMode && (
+          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-neon-red/10 border border-neon-red/40 text-neon-red">
+            AGGRESSIVE SENSITIVITY
+          </span>
+        )}
         <div className="ml-auto flex items-center gap-1.5">
           <div className="w-1.5 h-1.5 rounded-full bg-neon-cyan animate-pulse" />
           <span className="text-[10px] font-mono text-muted-foreground">NLP ENGINE</span>

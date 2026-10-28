@@ -89,3 +89,18 @@ async def timing_middleware(request: Request, call_next):
     return response
 
 app.include_router(router)
+
+# Mount frontend static build for single-service / container deployment if present
+import os
+from fastapi.staticfiles import StaticFiles
+
+_FRONTEND_DIST = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend", "dist"))
+if os.path.isdir(_FRONTEND_DIST):
+    app.mount("/", StaticFiles(directory=_FRONTEND_DIST, html=True), name="static")
+else:
+    @app.get("/")
+    async def index_fallback():
+        return {
+            "message": "NeuroDefender API v6 — deterministic /api/v1/detect — /api/v1/text-detect — /health"
+        }
+

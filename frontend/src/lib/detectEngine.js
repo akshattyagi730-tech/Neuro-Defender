@@ -50,7 +50,7 @@
  * Thresholds: SAFE ≤0.20, LOW ≤0.40, MEDIUM ≤0.65, HIGH >0.65
  */
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
+const BACKEND_URL = (import.meta?.env?.VITE_BACKEND_URL || "").replace(/\/$/, "");
 
 // ─── DCT helpers ──────────────────────────────────────────────────────────────
 // Compute 1-D DCT-II of length-8 array (exact formula, no approximation)
@@ -509,7 +509,13 @@ function metadataScore(image) {
 }
 
 // ─── Threat Classification ────────────────────────────────────────────────────
-function classifyThreat(score) {
+function classifyThreat(score, aggressive = false) {
+  if (aggressive) {
+    if (score > 0.45) return "HIGH";
+    if (score > 0.25) return "MEDIUM";
+    if (score > 0.12) return "LOW";
+    return "SAFE";
+  }
   if (score > 0.65) return "HIGH";
   if (score > 0.40) return "MEDIUM";
   if (score > 0.20) return "LOW";
@@ -544,7 +550,7 @@ function generateSummary(scores, threatLevel) {
 }
 
 // ─── Core Local Detection ─────────────────────────────────────────────────────
-function localDetect(image) {
+export function localDetect(image, aggressive = false) {
   return new Promise((resolve) => {
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d");
@@ -573,7 +579,7 @@ function localDetect(image) {
 
     // Weighted ensemble (weights sum to 1.00)
     // LSB gets highest weight — most discriminative for deliberate manipulation
-    scores.combined = parseFloat(Math.min(1, (
+    let baseScore = (
       0.14 * scores.pixel        +  // histogram / channel stats
       0.22 * scores.lsb          +  // steganography / bit-level attack
       0.14 * scores.frequency    +  // DCT artifact / adversarial HF noise
@@ -582,29 +588,38 @@ function localDetect(image) {
       0.10 * scores.squeeze      +  // perturbation residual after squeezing
       0.10 * scores.reconstruction + // Laplacian energy proxy
       0.06 * scores.metadata        // dimension heuristics (weakest signal)
-    )).toFixed(4));
+    );
 
-    const threat_level = classifyThreat(scores.combined);
+    if (aggressive) {
+      baseScore = Math.min(1.0, baseScore * 1.25);
+    }
+
+    scores.combined = parseFloat(Math.min(1, baseScore).toFixed(4));
+
+    const threat_level = classifyThreat(scores.combined, aggressive);
+    const advCutoff = aggressive ? 0.15 : 0.20;
+    const threatCutoff = aggressive ? 0.25 : 0.40;
+
     resolve({
       type: "image",
-      is_adversarial: scores.combined > 0.20,
-      is_threat: scores.combined > 0.40,
+      deterministic: true,
+      is_adversarial: scores.combined > advCutoff,
+      is_threat: scores.combined > threatCutoff,
       confidence: scores.combined,
+      score: scores.combined,
       threat_level,
       summary: generateSummary(scores, threat_level),
       scores,
       stats: { mean: pixelResult.mean, std: pixelResult.std },
+      aggressive_mode: aggressive,
+      source: "client_engine",
     });
   });
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
-export async function detectAdversarial(image, originalFile = null) {
+export async function detectAdversarial(image, originalFile = null, aggressive = false) {
   try {
-    if (!BACKEND_URL) {
-      throw new Error("Backend URL not configured");
-    }
-
     const form = new FormData();
 
     if (originalFile instanceof File) {
@@ -618,28 +633,23 @@ export async function detectAdversarial(image, originalFile = null) {
       form.append("image", blob);
     }
 
-    const res = await fetch(`${BACKEND_URL}/api/v1/detect`, {
+    const endpoint = `${BACKEND_URL}/api/v1/detect?aggressive=${aggressive ? "true" : "false"}`;
+    const res = await fetch(endpoint, {
       method: "POST",
       body: form,
     });
 
-    if (!res.ok) {
-      throw new Error(`Backend error: ${res.status}`);
+    if (res.ok) {
+      const data = await res.json();
+      return { ...data, source: "backend_api" };
     }
-
-    return await res.json();
+    console.warn(`[IMAGE] Backend returned status ${res.status}. Falling back to client-side engine.`);
   } catch (err) {
-    console.error("❌ IMAGE API FAILED:", err);
-
-    return {
-      type: "image",
-      is_adversarial: false,
-      confidence: 0,
-      threat_level: "LOW",
-      summary: "Backend not responding",
-      scores: {},
-    };
+    console.warn("⚠️ IMAGE API unreachable, running client-side forensic engine:", err.message);
   }
+
+  // Seamless fallback to client-side detection engine
+  return await localDetect(image, aggressive);
 }
 
 /**

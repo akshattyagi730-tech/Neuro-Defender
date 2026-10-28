@@ -27,7 +27,7 @@ IMAGE_ANALYSIS_VERSION = "image-v6.0-deterministic"
 
 
 @router.post("/api/v1/detect")
-async def detect(image: UploadFile = File(...)):
+async def detect(image: UploadFile = File(...), aggressive: bool = False):
     t0 = time.perf_counter()
 
     if image.content_type and not image.content_type.startswith("image/"):
@@ -45,7 +45,7 @@ async def detect(image: UploadFile = File(...)):
         cache_hit = cached is not None
 
         if cache_hit:
-            payload = cached
+            payload = dict(cached)
         else:
             try:
                 payload = compute_image_result(raw, image.filename or "")
@@ -53,11 +53,24 @@ async def detect(image: UploadFile = File(...)):
                 raise HTTPException(400, str(e)) from e
             img_cache.cache_set(file_hash, payload, IMAGE_CACHE_PATH)
 
+        if aggressive:
+            agg_score = min(1.0, round(payload["score"] * 1.25, 4))
+            agg_threat = "HIGH" if agg_score > 0.50 else "MEDIUM" if agg_score > 0.25 else "LOW"
+            payload = {
+                **payload,
+                "aggressive_mode": True,
+                "score": agg_score,
+                "confidence": agg_score,
+                "threat_level": agg_threat,
+                "is_adversarial": agg_score > 0.15,
+                "is_threat": agg_score > 0.30,
+            }
+
         elapsed = round((time.perf_counter() - t0) * 1000, 1)
         logger.info(
             f"[IMAGE] file={image.filename} sha256={file_hash} "
             f"combined={payload['score']} threat={payload['threat_level']} "
-            f"cache_hit={cache_hit} time={elapsed}ms"
+            f"aggressive={aggressive} cache_hit={cache_hit} time={elapsed}ms"
         )
 
     except HTTPException:
@@ -79,9 +92,10 @@ async def detect(image: UploadFile = File(...)):
 
 
 @router.post("/api/v1/text-detect")
-async def text_detect(payload: TextInput):
+async def text_detect(payload: TextInput, aggressive: bool = False):
     t0 = time.perf_counter()
     text = payload.text.strip()
+    is_aggressive = payload.aggressive or aggressive
 
     if not text:
         return {
@@ -132,7 +146,14 @@ async def text_detect(payload: TextInput):
         4,
     )
 
-    threat = "HIGH" if combined > 0.55 else "MEDIUM" if combined > 0.30 else "LOW"
+    if is_aggressive:
+        combined = round(min(1.0, combined * 1.25), 4)
+        threat = "HIGH" if combined > 0.45 else "MEDIUM" if combined > 0.22 else "LOW"
+        adv_threshold = TEXT_ADVERSARIAL_THRESHOLD * 0.75
+    else:
+        threat = "HIGH" if combined > 0.55 else "MEDIUM" if combined > 0.30 else "LOW"
+        adv_threshold = TEXT_ADVERSARIAL_THRESHOLD
+
     scores = {
         "confidence": conf,
         "perturbation": perturbation,
@@ -146,12 +167,13 @@ async def text_detect(payload: TextInput):
     }
 
     elapsed = round((time.perf_counter() - t0) * 1000, 1)
-    logger.info(f"[TEXT] combined={combined} threat={threat} time={elapsed}ms")
+    logger.info(f"[TEXT] combined={combined} threat={threat} aggressive={is_aggressive} time={elapsed}ms")
 
     return {
         "type": "text",
-        "is_adversarial": combined >= TEXT_ADVERSARIAL_THRESHOLD,
-        "is_threat": combined >= TEXT_ADVERSARIAL_THRESHOLD,
+        "aggressive_mode": is_aggressive,
+        "is_adversarial": combined >= adv_threshold,
+        "is_threat": combined >= adv_threshold,
         "threat_level": threat,
         "score": combined,
         "confidence": combined,
@@ -179,8 +201,8 @@ async def health():
     }
 
 
-@router.get("/")
-async def root():
+@router.get("/api")
+async def api_root():
     return {
         "message": "NeuroDefender API v6 — deterministic /api/v1/detect — /api/v1/text-detect — /health"
     }

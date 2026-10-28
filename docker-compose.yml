@@ -1,0 +1,14 @@
+services:
+  neurodefender:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: neurodefender
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - ND_ALLOWED_ORIGINS=*
+      - ND_RATE_LIMIT_RPS=10.0
+      - ND_RATE_LIMIT_BURST=20
+    restart: unless-stopped

@@ -10,7 +10,8 @@ import ThreatSphere3D from "../components/sentinel/ThreatSphere3D";
 import ActivityFeed from "../components/sentinel/ActivityFeed";
 import StatsBar from "../components/sentinel/StatsBar";
 import TextAnalysisPanel from "../components/sentinel/TextAnalysisPanel";
-import { detectAdversarial } from "../lib/detectEngine";
+import ImageComparison from "../components/sentinel/ImageComparison";
+import { detectAdversarial, simulateFGSM } from "../lib/detectEngine";
 
 let logIdCounter = 0;
 
@@ -47,13 +48,13 @@ export default function Dashboard() {
   const handleAnalyze = useCallback(async () => {
     if (!imageEl) return;
     setIsAnalyzing(true);
-    addLog("info", "Starting multi-method adversarial detection...");
+    addLog("info", `Starting multi-method adversarial detection${aggressiveMode ? " (Aggressive Mode)" : ""}...`);
 
     // Simulate processing delay for UX
-    await new Promise((r) => setTimeout(r, 1200));
+    await new Promise((r) => setTimeout(r, 800));
 
     try {
-      const result = await detectAdversarial(imageEl, imageFile);
+      const result = await detectAdversarial(imageEl, imageFile, aggressiveMode);
       setResults(result);
 
       setStats((prev) => ({
@@ -63,13 +64,14 @@ export default function Dashboard() {
         safe: prev.safe + (!result.is_adversarial ? 1 : 0),
       }));
 
+      const sourceTag = result.source === "client_engine" ? " [Client Engine]" : " [API Engine]";
       if (result.is_adversarial) {
         addLog(
           result.threat_level === "HIGH" ? "threat" : "warning",
-          `Adversarial pattern detected — ${result.threat_level} threat (${(result.confidence * 100).toFixed(1)}%)`
+          `Adversarial pattern detected — ${result.threat_level} threat (${(result.confidence * 100).toFixed(1)}%)${sourceTag}`
         );
       } else {
-        addLog("safe", `Image classified as safe (score: ${(result.confidence * 100).toFixed(1)}%)`);
+        addLog("safe", `Image classified as safe (score: ${(result.confidence * 100).toFixed(1)}%)${sourceTag}`);
       }
     } catch (err) {
       console.error(err);
@@ -77,7 +79,47 @@ export default function Dashboard() {
     } finally {
       setIsAnalyzing(false);
     }
-  }, [imageEl, imageFile, addLog]);
+  }, [imageEl, imageFile, aggressiveMode, addLog]);
+
+  const handleSimulateFGSM = useCallback(async (epsilon = 0.05) => {
+    if (!imageEl) return;
+    setIsAnalyzing(true);
+    addLog("warning", `Injecting FGSM adversarial perturbation (ε=${epsilon})...`);
+
+    try {
+      const sim = await simulateFGSM(imageEl, epsilon);
+      setComparison(sim);
+
+      const advImg = new window.Image();
+      advImg.onload = async () => {
+        try {
+          const advResult = await detectAdversarial(advImg, null, aggressiveMode);
+          setResults(advResult);
+          setStats((prev) => ({
+            ...prev,
+            totalScans: prev.totalScans + 1,
+            threats: prev.threats + (advResult.is_adversarial ? 1 : 0),
+            safe: prev.safe + (!advResult.is_adversarial ? 1 : 0),
+            attacks: prev.attacks + 1,
+          }));
+          addLog(
+            advResult.threat_level === "HIGH" ? "threat" : "warning",
+            `Adversarially perturbed image re-scanned: ${advResult.threat_level} threat (${(advResult.confidence * 100).toFixed(1)}%)`
+          );
+        } catch (err) {
+          console.error(err);
+          addLog("threat", `Adversarial analysis failed: ${err.message}`);
+        } finally {
+          setIsAnalyzing(false);
+        }
+      };
+      advImg.src = sim.adversarialDataUrl;
+    } catch (err) {
+      console.error(err);
+      addLog("threat", `FGSM simulation failed: ${err.message}`);
+      setIsAnalyzing(false);
+    }
+  }, [imageEl, aggressiveMode, addLog]);
 
   return (
     <div className="min-h-screen relative overflow-x-hidden">
@@ -116,7 +158,7 @@ export default function Dashboard() {
             transition={{ duration: 0.35 }}
             className="mt-8 max-w-3xl mx-auto"
           >
-            <TextAnalysisPanel />
+            <TextAnalysisPanel aggressiveMode={aggressiveMode} />
           </motion.div>
         ) : (
           <div className="mt-8 grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -126,6 +168,7 @@ export default function Dashboard() {
                 <UploadSection
                   onImageLoaded={handleImageLoaded}
                   onAnalyze={handleAnalyze}
+                  onSimulateFGSM={handleSimulateFGSM}
                   isAnalyzing={isAnalyzing}
                 />
               </TiltCard>
@@ -134,6 +177,13 @@ export default function Dashboard() {
 
             {/* Right Column — Results + Comparison */}
             <div className="lg:col-span-8 space-y-6">
+              {comparison && (
+                <ImageComparison
+                  originalUrl={comparison.originalUrl}
+                  adversarialUrl={comparison.adversarialUrl}
+                  epsilon={comparison.epsilon}
+                />
+              )}
               {results && (
                 <ThreatSphere3D threatLevel={results.threat_level || "LOW"} />
               )}

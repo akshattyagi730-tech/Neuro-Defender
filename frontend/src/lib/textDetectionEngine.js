@@ -4,35 +4,33 @@
  * invisible characters, obfuscated text, suspicious URLs, encoded content.
  */
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
-
-// safety check
-if (!BACKEND_URL) {
-  console.error("❌ BACKEND_URL missing! Check Vercel ENV");
-}
+const BACKEND_URL = (import.meta?.env?.VITE_BACKEND_URL || "").replace(/\/$/, "");
 
 // ─── Unicode / Invisible Character Detection ──────────────────────────────────
 
 const ZERO_WIDTH_CHARS = [
   '\u200B', '\u200C', '\u200D', '\u200E', '\u200F', // zero-width space, joiners, marks
+  '\u202A', '\u202B', '\u202C', '\u202D', '\u202E', // bidirectional overrides
   '\u2060', '\u2061', '\u2062', '\u2063', '\u2064', // word joiners, invisible operators
+  '\u2066', '\u2067', '\u2068', '\u2069', '\u206A', '\u206B', '\u206C', '\u206D', '\u206E', '\u206F',
   '\uFEFF', // BOM / zero-width no-break space
   '\u00AD', // soft hyphen
   '\u034F', // combining grapheme joiner
   '\u115F', '\u1160', // Hangul fillers
   '\u3164', // Hangul filler
+  '\u180E', // Mongolian vowel separator
 ];
 
 const HOMOGLYPH_MAP = {
   // Cyrillic look-alikes for Latin chars
-  'а':'a','е':'e','о':'o','р':'p','с':'c','х':'x','у':'y',
-  'і':'i','ї':'i','ё':'e','ъ':'b','ь':'b',
+  'а': 'a', 'е': 'e', 'о': 'o', 'р': 'p', 'с': 'c', 'х': 'x', 'у': 'y',
+  'і': 'i', 'ї': 'i', 'ё': 'e', 'ъ': 'b', 'ь': 'b',
   // Greek look-alikes
-  'α':'a','ε':'e','ο':'o','ρ':'p','τ':'t','υ':'u','χ':'x',
+  'α': 'a', 'ε': 'e', 'ο': 'o', 'ρ': 'p', 'τ': 't', 'υ': 'u', 'χ': 'x',
   // Fullwidth chars
-  'ａ':'a','ｂ':'b','ｃ':'c','ｄ':'d','ｅ':'e','ｆ':'f','ｇ':'g',
+  'ａ': 'a', 'ｂ': 'b', 'ｃ': 'c', 'ｄ': 'd', 'ｅ': 'e', 'ｆ': 'f', 'ｇ': 'g',
   // Common leet-substitution symbols used in obfuscation
-  '@':'a','3':'e','1':'i','0':'o','5':'s','$':'s','7':'t','!':'i',
+  '@': 'a', '3': 'e', '1': 'i', '0': 'o', '5': 's', '$': 's', '7': 't', '!': 'i',
 };
 
 // Suspicious URL patterns
@@ -69,9 +67,7 @@ function invisibleCharScore(text) {
   let count = 0;
   for (const ch of text) {
     if (ZERO_WIDTH_CHARS.includes(ch)) count++;
-    // General invisible Unicode ranges
     const cp = ch.codePointAt(0);
-    if (cp >= 0x2000 && cp <= 0x206F) count++; // General Punctuation (many invisible)
     if (cp >= 0xE000 && cp <= 0xF8FF) count++; // Private Use Area
   }
   // Even 1 zero-width char is suspicious; normalize
@@ -186,14 +182,19 @@ function modelConfidence(text) {
 
 function perturbationScore(text) {
   const normalized = normalizeText(text);
-  const origConf  = modelConfidence(text);
+  const origConf = modelConfidence(text);
   const cleanConf = modelConfidence(normalized || text);
   return Math.min(1, Math.abs(origConf - cleanConf));
 }
 
 // ─── Threat Classifier ────────────────────────────────────────────────────────
 
-function classifyThreat(score) {
+function classifyThreat(score, aggressive = false) {
+  if (aggressive) {
+    if (score > 0.40) return "HIGH";
+    if (score > 0.20) return "MEDIUM";
+    return "LOW";
+  }
   if (score > 0.55) return "HIGH";
   if (score > 0.30) return "MEDIUM";
   return "LOW";
@@ -206,9 +207,9 @@ function generateSummary(scores, threatLevel, text) {
   if (scores.invisible > 0.1) findings.push("zero-width/invisible characters");
   if (scores.homoglyph > 0.1) findings.push("homoglyph substitution attack");
   if (scores.unicodeMix > 0.1) findings.push("unicode script mixing");
-  if (scores.encoded > 0.1)   findings.push("encoded payload detected");
-  if (scores.url > 0.1)       findings.push("suspicious URL pattern");
-  if (scores.anomaly > 0.4)   findings.push("heavy character obfuscation");
+  if (scores.encoded > 0.1) findings.push("encoded payload detected");
+  if (scores.url > 0.1) findings.push("suspicious URL pattern");
+  if (scores.anomaly > 0.4) findings.push("heavy character obfuscation");
 
   if (findings.length === 0) findings.push("character-level anomalies");
 
@@ -219,29 +220,35 @@ function generateSummary(scores, threatLevel, text) {
 
 // ─── Core Local Detection ─────────────────────────────────────────────────────
 
-function localTextDetect(text) {
+export function localTextDetect(text, aggressive = false) {
   if (!text || !text.trim()) {
     return {
-      type: "text", is_adversarial: false, confidence: 0, threat_level: "LOW",
+      type: "text",
+      is_adversarial: false,
+      confidence: 0,
+      score: 0,
+      threat_level: "LOW",
       summary: "Empty input.",
       scores: { confidence: 0, perturbation: 0, anomaly: 0, invisible: 0, homoglyph: 0, unicodeMix: 0, encoded: 0, url: 0, combined: 0 },
+      source: "client_engine",
+      aggressive_mode: aggressive,
     };
   }
 
   const input = text.length > 5000 ? text.slice(0, 5000) : text;
 
-  const rawConf    = modelConfidence(input);
-  const conf       = parseFloat((1 - rawConf).toFixed(4));
+  const rawConf = modelConfidence(input);
+  const conf = parseFloat((1 - rawConf).toFixed(4));
   const perturbation = parseFloat(perturbationScore(input).toFixed(4));
-  const anomaly    = parseFloat(anomalyScore(input).toFixed(4));
-  const invisible  = parseFloat(invisibleCharScore(input).toFixed(4));
-  const homoglyph  = parseFloat(homoglyphScore(input).toFixed(4));
+  const anomaly = parseFloat(anomalyScore(input).toFixed(4));
+  const invisible = parseFloat(invisibleCharScore(input).toFixed(4));
+  const homoglyph = parseFloat(homoglyphScore(input).toFixed(4));
   const unicodeMix = parseFloat(unicodeMixingScore(input).toFixed(4));
-  const encoded    = parseFloat(encodedPayloadScore(input).toFixed(4));
-  const url        = parseFloat(suspiciousUrlScore(input).toFixed(4));
+  const encoded = parseFloat(encodedPayloadScore(input).toFixed(4));
+  const url = parseFloat(suspiciousUrlScore(input).toFixed(4));
 
   // Weighted ensemble — invisible chars, homoglyphs, encoded payloads get high weight
-  const combined = parseFloat(Math.min(1, (
+  let baseScore = (
     0.12 * conf +
     0.08 * perturbation +
     0.20 * anomaly +
@@ -250,53 +257,53 @@ function localTextDetect(text) {
     0.10 * unicodeMix +
     0.10 * encoded +
     0.05 * url
-  )).toFixed(4));
+  );
 
-  const threat_level = classifyThreat(combined);
+  if (aggressive) {
+    baseScore = Math.min(1.0, baseScore * 1.25);
+  }
+
+  const combined = parseFloat(Math.min(1, baseScore).toFixed(4));
+  const threat_level = classifyThreat(combined, aggressive);
+  const cutoff = aggressive ? 0.22 : 0.30;
   const scores = { confidence: conf, perturbation, anomaly, invisible, homoglyph, unicodeMix, encoded, url, combined };
 
   return {
     type: "text",
-    is_adversarial: combined >= 0.30,
+    is_adversarial: combined >= cutoff,
+    is_threat: combined >= cutoff,
     confidence: combined,
+    score: combined,
     threat_level,
     summary: generateSummary(scores, threat_level, input),
     scores,
+    source: "client_engine",
+    aggressive_mode: aggressive,
   };
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
-export async function detectTextAdversarial(text) {
+export async function detectTextAdversarial(text, aggressive = false) {
   try {
-    if (!BACKEND_URL) {
-      throw new Error("Backend URL not configured");
-    }
-
-    const res = await fetch(`${BACKEND_URL}/api/v1/text-detect`, {
+    const endpoint = `${BACKEND_URL}/api/v1/text-detect?aggressive=${aggressive ? "true" : "false"}`;
+    const res = await fetch(endpoint, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, aggressive }),
     });
 
-    if (!res.ok) {
-      throw new Error(`Backend error: ${res.status}`);
+    if (res.ok) {
+      const data = await res.json();
+      return { ...data, source: "backend_api" };
     }
-
-    return await res.json();
+    console.warn(`[TEXT] Backend returned status ${res.status}. Falling back to client-side engine.`);
   } catch (err) {
-    console.error("❌ TEXT API FAILED:", err);
-
-    // fallback (VERY IMPORTANT)
-    return {
-      type: "text",
-      is_adversarial: false,
-      confidence: 0,
-      threat_level: "LOW",
-      summary: "Backend not responding",
-      scores: {},
-    };
+    console.warn("⚠️ TEXT API unreachable, running client-side NLP engine:", err.message);
   }
+
+  // Seamless fallback to client-side detection engine
+  return localTextDetect(text, aggressive);
 }

@@ -30,9 +30,7 @@ RATE_LIMIT_RPS = _env_float("ND_RATE_LIMIT_RPS", 5.0)  # per IP, per route bucke
 RATE_LIMIT_BURST = _env_int("ND_RATE_LIMIT_BURST", 10)
 
 # CORS
-ALLOWED_ORIGINS = [
-    o.strip() for o in os.getenv("ND_ALLOWED_ORIGINS", "*").split(",") if o.strip()
-]
+ALLOWED_ORIGINS = ["*"]
 
 # Thresholds (tune without code changes)
 IMAGE_ADVERSARIAL_THRESHOLD = _env_float("ND_IMAGE_ADVERSARIAL_THRESHOLD", 0.20)

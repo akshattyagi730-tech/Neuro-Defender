@@ -1,11 +1,13 @@
 import { useState, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Upload, Image, X, Scan } from "lucide-react";
+import { Upload, Image, X, Scan, Zap, Sliders } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-export default function UploadSection({ onImageLoaded, onAnalyze, isAnalyzing }) {
+export default function UploadSection({ onImageLoaded, onAnalyze, onSimulateFGSM, isAnalyzing }) {
   const [preview, setPreview] = useState(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [epsilon, setEpsilon] = useState(0.05);
+  const [showAttackOptions, setShowAttackOptions] = useState(false);
   const fileInputRef = useRef(null);
 
   const handleFile = useCallback((file) => {
@@ -75,7 +77,7 @@ export default function UploadSection({ onImageLoaded, onAnalyze, isAnalyzing })
               <br />
               or click to browse
             </p>
-            <p className="text-xs text-muted-foreground/60 mt-2">PNG, JPG, WEBP up to 10MB</p>
+            <p className="text-xs text-muted-foreground/60 mt-2">PNG, JPG, WEBP up to 20MB</p>
             <input
               ref={fileInputRef}
               type="file"
@@ -136,6 +138,63 @@ export default function UploadSection({ onImageLoaded, onAnalyze, isAnalyzing })
                 </>
               )}
             </Button>
+
+            {/* Adversarial Attack Simulator Toggle */}
+            <div className="pt-2 border-t border-border/40 space-y-3">
+              <button
+                type="button"
+                onClick={() => setShowAttackOptions((v) => !v)}
+                className="w-full flex items-center justify-between text-xs font-mono text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <span className="flex items-center gap-1.5 text-neon-purple">
+                  <Zap className="w-3.5 h-3.5" />
+                  FGSM Attack Simulator
+                </span>
+                <span className="text-[10px] text-muted-foreground/70">
+                  {showAttackOptions ? "Hide ▲" : "Configure ▼"}
+                </span>
+              </button>
+
+              {showAttackOptions && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="space-y-3 rounded-xl bg-muted/20 border border-neon-purple/20 p-3"
+                >
+                  <div className="flex items-center justify-between text-xs font-mono">
+                    <span className="text-muted-foreground">Perturbation (ε):</span>
+                    <span className="text-neon-purple font-bold">{epsilon.toFixed(3)}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0.01"
+                    max="0.15"
+                    step="0.01"
+                    value={epsilon}
+                    onChange={(e) => setEpsilon(parseFloat(e.target.value))}
+                    className="w-full accent-purple-500 cursor-pointer"
+                  />
+                  <div className="flex justify-between text-[10px] font-mono text-muted-foreground/60">
+                    <span>Subtle (0.01)</span>
+                    <span>Moderate (0.05)</span>
+                    <span>Severe (0.15)</span>
+                  </div>
+                </motion.div>
+              )}
+
+              {onSimulateFGSM && (
+                <Button
+                  onClick={() => onSimulateFGSM(epsilon)}
+                  disabled={isAnalyzing}
+                  variant="outline"
+                  className="w-full border-neon-purple/40 text-neon-purple hover:bg-neon-purple/10 font-mono tracking-wider h-10 disabled:opacity-50"
+                >
+                  <Zap className="w-3.5 h-3.5 mr-2" />
+                  SIMULATE FGSM ATTACK
+                </Button>
+              )}
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
