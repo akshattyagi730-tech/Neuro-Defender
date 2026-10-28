@@ -50,7 +50,14 @@
  * Thresholds: SAFE ≤0.20, LOW ≤0.40, MEDIUM ≤0.65, HIGH >0.65
  */
 
-const BACKEND_URL = (import.meta?.env?.VITE_BACKEND_URL || "").replace(/\/$/, "");
+function resolveBackendUrl() {
+  let url = (import.meta?.env?.VITE_BACKEND_URL || "").trim().replace(/\/$/, "");
+  if (url && !url.startsWith("http://") && !url.startsWith("https://")) {
+    url = `https://${url}`;
+  }
+  return url;
+}
+const BACKEND_URL = resolveBackendUrl();
 
 // ─── DCT helpers ──────────────────────────────────────────────────────────────
 // Compute 1-D DCT-II of length-8 array (exact formula, no approximation)

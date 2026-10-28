@@ -25,7 +25,6 @@ services:
     runtime: static
     rootDir: frontend
     plan: free
-    region: oregon
     buildCommand: npm install && npm run build
     staticPublishPath: ./dist
     routes:
@@ -35,6 +34,6 @@ services:
     envVars:
       - key: VITE_BACKEND_URL
         fromService:
-          name: neurodefender-backend
           type: web
+          name: neurodefender-backend
           property: host

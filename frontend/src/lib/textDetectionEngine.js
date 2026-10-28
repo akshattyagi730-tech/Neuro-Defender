@@ -4,7 +4,14 @@
  * invisible characters, obfuscated text, suspicious URLs, encoded content.
  */
 
-const BACKEND_URL = (import.meta?.env?.VITE_BACKEND_URL || "").replace(/\/$/, "");
+function resolveBackendUrl() {
+  let url = (import.meta?.env?.VITE_BACKEND_URL || "").trim().replace(/\/$/, "");
+  if (url && !url.startsWith("http://") && !url.startsWith("https://")) {
+    url = `https://${url}`;
+  }
+  return url;
+}
+const BACKEND_URL = resolveBackendUrl();
 
 // ─── Unicode / Invisible Character Detection ──────────────────────────────────
 
